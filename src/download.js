@@ -5,6 +5,7 @@ export function downloadAll({ linksFile, outDir, cookieArgs, extraArgs = [] }) {
   const args = [
     '--batch-file', linksFile,
     ...cookieArgs,
+    '--format', 'hd/bv*[vcodec^=avc1]+ba/sd/bv*+ba/b',
     '--download-archive', join(outDir, 'archive.txt'),
     '--paths', outDir,
     '--output', '%(upload_date)s_%(id)s.%(ext)s',
