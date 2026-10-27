@@ -1,0 +1,19 @@
+{
+  "name": "fb-dumper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "fb-dumper": "src/cli.js"
+  },
+  "scripts": {
+    "dump": "node src/cli.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "playwright": "^1.64.1"
+  }
+}
