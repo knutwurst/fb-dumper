@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { collectLinks } from './collect.js';
@@ -8,6 +8,7 @@ import { convertToH264 } from './convert.js';
 import { loadCookieFile, writeNetscape } from './cookie-file.js';
 import { downloadAll } from './download.js';
 import { findProfileDir, readFacebookCookies } from './firefox.js';
+import { removeMacJunk } from './junk.js';
 import { parseVideoLink, resolvePage } from './page.js';
 import { killChildren } from './proc.js';
 
@@ -34,9 +35,19 @@ Options:
 
 Anything after "--" is passed to yt-dlp unchanged.`;
 
+let outDir = null;
+
+function cleanUp() {
+  if (!outDir) return;
+  const sidecar = join(dirname(outDir), `._${basename(outDir)}`);
+  const removed = removeMacJunk(outDir) + (existsSync(sidecar) ? (rmSync(sidecar), 1) : 0);
+  if (removed) console.log(`Removed ${removed} macOS metadata files`);
+}
+
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     killChildren();
+    cleanUp();
     process.exit(130);
   });
 }
@@ -121,7 +132,7 @@ async function main() {
   }
   console.log(`Page:    ${slug}`);
 
-  let outDir = opts.out ? resolve(opts.out) : null;
+  outDir = opts.out ? resolve(opts.out) : null;
   if (!opts['skip-collect']) {
     if (!cookies.some(c => c.name === 'c_user')) {
       throw new Error('No Facebook login in these cookies (c_user cookie missing)');
@@ -153,10 +164,14 @@ async function main() {
     console.log(`Output:  ${outDir}`);
   }
 
-  if (opts['collect-only']) return 0;
+  if (opts['collect-only']) {
+    cleanUp();
+    return 0;
+  }
 
   const linksFile = join(outDir, 'links.txt');
   if (!existsSync(linksFile)) throw new Error(`${linksFile} does not exist, run without --skip-collect first`);
+  if (!readFileSync(linksFile, 'utf8').trim()) throw new Error('No reels or videos found on this page');
   const code = await downloadAll({ linksFile, outDir, cookieArgs, extraArgs: ytDlpArgs });
   if (code !== 0) console.log(`Warning: yt-dlp exited with ${code}, some videos may be missing`);
 
@@ -165,6 +180,7 @@ async function main() {
     if (converted || failed) console.log(`Converted ${converted} videos to H.264${failed ? `, ${failed} failed` : ''}`);
   }
 
+  cleanUp();
   const total = readdirSync(outDir).filter(f => f.endsWith('.mp4') && !f.startsWith('.')).length;
   console.log(`Done: ${total} videos in ${outDir}`);
   return code === 0 ? 0 : 2;
@@ -174,6 +190,7 @@ main().then(
   code => process.exit(code),
   err => {
     killChildren();
+    cleanUp();
     console.error(`Error: ${err.message}`);
     process.exit(1);
   },
