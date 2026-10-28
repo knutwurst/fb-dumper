@@ -9,8 +9,6 @@ export function downloadAll({ linksFile, outDir, cookieArgs, extraArgs = [] }) {
     '--download-archive', join(outDir, 'archive.txt'),
     '--paths', outDir,
     '--output', '%(upload_date|undated)s_%(id)s.%(ext)s',
-    '--sleep-interval', '3',
-    '--max-sleep-interval', '8',
     '--ignore-errors',
     '--no-overwrites',
     '--newline',

@@ -29,7 +29,7 @@ Options:
   --skip-collect      Only download the links already in links.txt
   --keep-codec        Do not convert AV1/VP9 files to H.264
   --max-links <n>     Stop collecting after n links (for testing)
-  --max-idle <n>      Scroll rounds without new content before giving up (default: 6)
+  --max-idle <n>      Scroll rounds without new content before giving up (default: 3)
   --headful           Show the browser window while collecting
   -h, --help          Show this help
 
@@ -97,7 +97,7 @@ async function main() {
       'skip-collect': { type: 'boolean', default: false },
       'keep-codec': { type: 'boolean', default: false },
       'max-links': { type: 'string' },
-      'max-idle': { type: 'string', default: '6' },
+      'max-idle': { type: 'string', default: '3' },
       headful: { type: 'boolean', default: false },
       help: { type: 'boolean', short: 'h', default: false },
     },

@@ -17,7 +17,7 @@ function cleanTitle(raw) {
   return title && title.toLowerCase() !== 'facebook' ? title : null;
 }
 
-export async function collectLinks({ tabUrls, cookies, headful = false, maxIdleRounds = 6, maxLinks = Infinity, log = console.log }) {
+export async function collectLinks({ tabUrls, cookies, headful = false, maxIdleRounds = 3, maxLinks = Infinity, log = console.log }) {
   const browser = await chromium.launch({ channel: 'chrome', headless: !headful });
   try {
     const major = browser.version().split('.')[0];
@@ -44,13 +44,11 @@ export async function collectLinks({ tabUrls, cookies, headful = false, maxIdleR
           const link = parseVideoLink(href);
           if (link && !found.has(link.id)) found.set(link.id, link.url);
         }
-        const grew = await page.evaluate(async () => {
-          const h = document.documentElement.scrollHeight;
-          window.scrollTo(0, h);
+        await page.evaluate(async () => {
+          window.scrollTo(0, document.documentElement.scrollHeight);
           await new Promise(r => setTimeout(r, 2500));
-          return document.documentElement.scrollHeight > h;
         });
-        idle = found.size > before || grew ? 0 : idle + 1;
+        idle = found.size > before ? 0 : idle + 1;
         log(`  ${found.size - tabStart} links on this tab (${found.size} total)`);
       }
       title ??=
