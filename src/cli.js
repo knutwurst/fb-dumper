@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -56,13 +56,16 @@ function pageDir(dest, slug, title) {
     ? readdirSync(dest, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name)
     : [];
   const name = title?.replace(/[/:\\]/g, '-').replace(/\s+/g, ' ').trim() || null;
-  const dir =
-    dirs.find(d => readMarker(join(dest, d)) === slug) ??
-    dirs.find(d => d === slug || d.endsWith(`[${slug}]`)) ??
-    (name && dirs.find(d => d.normalize() === name.normalize())) ??
-    name ??
-    slug;
-  return join(dest, dir);
+  const isIdName = d => d === slug || d.endsWith(`[${slug}]`);
+  const byName = name && dirs.find(d => d.normalize() === name.normalize());
+  const existing = dirs.find(d => readMarker(join(dest, d)) === slug) ?? byName ?? dirs.find(isIdName);
+
+  if (existing && name && !byName && isIdName(existing)) {
+    renameSync(join(dest, existing), join(dest, name));
+    console.log(`Renamed ${existing} -> ${name}`);
+    return join(dest, name);
+  }
+  return join(dest, existing ?? name ?? slug);
 }
 
 function preparePageDir(dir, slug) {
