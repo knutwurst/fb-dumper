@@ -8,6 +8,15 @@ function assertLoggedIn(page) {
   }
 }
 
+function cleanTitle(raw) {
+  const title = raw
+    .replace(/^\(\d+\)\s*/, '')
+    .replace(/\s*\|\s*Facebook\s*$/i, '')
+    .replace(/\s+(Reels|Videos)\s*$/i, '')
+    .trim();
+  return title && title.toLowerCase() !== 'facebook' ? title : null;
+}
+
 export async function collectLinks({ tabUrls, cookies, headful = false, maxIdleRounds = 6, maxLinks = Infinity, log = console.log }) {
   const browser = await chromium.launch({ channel: 'chrome', headless: !headful });
   try {
@@ -20,6 +29,7 @@ export async function collectLinks({ tabUrls, cookies, headful = false, maxIdleR
     const page = await context.newPage();
 
     const found = new Map();
+    let title = null;
     for (const tabUrl of tabUrls) {
       log(`→ ${tabUrl}`);
       await page.goto(tabUrl, { waitUntil: 'domcontentloaded' });
@@ -43,8 +53,11 @@ export async function collectLinks({ tabUrls, cookies, headful = false, maxIdleR
         idle = found.size > before || grew ? 0 : idle + 1;
         log(`  ${found.size - tabStart} links on this tab (${found.size} total)`);
       }
+      title ??=
+        cleanTitle(await page.title()) ??
+        cleanTitle(await page.$$eval('h1', hs => hs.map(h => h.innerText.trim()).find(Boolean) ?? ''));
     }
-    return [...found.values()].slice(0, maxLinks);
+    return { links: [...found.values()].slice(0, maxLinks), title };
   } finally {
     await browser.close();
   }
