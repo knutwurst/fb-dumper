@@ -15,7 +15,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 16) {
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
                 GridRow {
-                    Text("Seite").gridColumnAlignment(.trailing)
+                    Text("Seite / Reel").gridColumnAlignment(.trailing)
                     TextField("https://www.facebook.com/…", text: $pageURL)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(start)

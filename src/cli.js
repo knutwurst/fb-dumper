@@ -10,14 +10,15 @@ import { downloadAll } from './download.js';
 import { findProfileDir, readFacebookCookies } from './firefox.js';
 import { removeMacJunk } from './junk.js';
 import { parseVideoLink, resolvePage } from './page.js';
-import { killChildren } from './proc.js';
+import { killChildren, run } from './proc.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const USAGE = `Usage: fb-dumper <page-url> [options]
+const USAGE = `Usage: fb-dumper <page-url|reel-url> [options]
 
 Collects every reel/video link of a Facebook page with your Firefox login,
 downloads them all with yt-dlp and converts anything that is not H.264.
+A single reel or video URL is saved into the folder of its page.
 
 Options:
   --dest <dir>        Base directory, each page gets its own folder in it (default: downloads)
@@ -81,7 +82,57 @@ function pageDir(dest, slug, title) {
 
 function preparePageDir(dir, slug) {
   mkdirSync(dir, { recursive: true });
-  if (readMarker(dir) !== slug) writeFileSync(join(dir, MARKER), `${slug}\n`);
+  if (slug && readMarker(dir) !== slug) writeFileSync(join(dir, MARKER), `${slug}\n`);
+}
+
+function mergeLinks(linksFile, links) {
+  const merged = new Map();
+  const previous = existsSync(linksFile) ? readFileSync(linksFile, 'utf8').split('\n') : [];
+  for (const url of [...previous, ...links]) {
+    const link = url && parseVideoLink(url);
+    if (link && !merged.has(link.id)) merged.set(link.id, link.url);
+  }
+  writeFileSync(linksFile, [...merged.values()].join('\n') + '\n');
+  return merged.size;
+}
+
+async function finish(code, keepCodec, onlyId = null) {
+  if (code !== 0) console.log(`Warning: yt-dlp exited with ${code}, some videos may be missing`);
+
+  if (!keepCodec) {
+    const { converted, failed } = await convertToH264(outDir);
+    if (converted || failed) console.log(`Converted ${converted} videos to H.264${failed ? `, ${failed} failed` : ''}`);
+  }
+
+  cleanUp();
+  const total = readdirSync(outDir).filter(
+    f => f.endsWith('.mp4') && !f.startsWith('.') && (!onlyId || f.includes(`_${onlyId}.`)),
+  ).length;
+  console.log(`Done: ${total} videos in ${outDir}`);
+  return code === 0 ? 0 : 2;
+}
+
+async function dumpSingle(link, { dest, out, cookieArgs, cacheDir, keepCodec, ytDlpArgs }) {
+  console.log(`Video:   ${link.url}`);
+  const { out: meta } = await run(
+    'yt-dlp',
+    [...cookieArgs, '--skip-download', '--no-warnings', '--print', '%(uploader_id)s\t%(uploader)s', link.url],
+    { capture: true },
+  );
+  const [uploaderId = null, uploader = null] = (meta.trim().split('\n').pop() ?? '')
+    .split('\t')
+    .map(v => (v && v !== 'NA' ? v : null));
+
+  outDir = out ?? (uploaderId ? pageDir(dest, uploaderId, uploader) : join(dest, 'reels'));
+  preparePageDir(outDir, out ? null : uploaderId);
+  console.log(`Output:  ${outDir}`);
+  mergeLinks(join(outDir, 'links.txt'), [link.url]);
+
+  mkdirSync(cacheDir, { recursive: true });
+  const batch = join(cacheDir, 'single.txt');
+  writeFileSync(batch, `${link.url}\n`);
+  const code = await downloadAll({ linksFile: batch, outDir, cookieArgs, extraArgs: ytDlpArgs });
+  return finish(code, keepCodec, link.id);
 }
 
 async function main() {
@@ -113,7 +164,8 @@ async function main() {
   const badTab = tabs.find(t => !['reels', 'videos'].includes(t));
   if (badTab) throw new Error(`Unknown tab "${badTab}", use reels and/or videos`);
 
-  const { slug, tabUrls } = resolvePage(pageInput, tabs);
+  const single = parseVideoLink(pageInput);
+  const { slug, tabUrls } = single ? { slug: null, tabUrls: [] } : resolvePage(pageInput, tabs);
   const dest = resolve(opts.dest ?? join(ROOT, 'downloads'));
   const cacheDir = process.env.FB_DUMPER_CACHE ?? join(ROOT, '.cache');
 
@@ -129,6 +181,16 @@ async function main() {
     cookies = readFacebookCookies(profileDir, cacheDir);
     cookieArgs = ['--cookies-from-browser', `firefox:${profileDir}`];
     console.log(`Firefox: ${profileDir}`);
+  }
+  if (single) {
+    return dumpSingle(single, {
+      dest,
+      out: opts.out ? resolve(opts.out) : null,
+      cookieArgs,
+      cacheDir,
+      keepCodec: opts['keep-codec'],
+      ytDlpArgs,
+    });
   }
   console.log(`Page:    ${slug}`);
 
@@ -151,14 +213,8 @@ async function main() {
     console.log(`Output:  ${outDir}`);
 
     const linksFile = join(outDir, 'links.txt');
-    const merged = new Map();
-    const previous = existsSync(linksFile) ? readFileSync(linksFile, 'utf8').split('\n') : [];
-    for (const url of [...previous, ...links]) {
-      const link = url && parseVideoLink(url);
-      if (link && !merged.has(link.id)) merged.set(link.id, link.url);
-    }
-    writeFileSync(linksFile, [...merged.values()].join('\n') + '\n');
-    console.log(`\n${links.length} links found, ${merged.size} in ${linksFile}`);
+    const size = mergeLinks(linksFile, links);
+    console.log(`\n${links.length} links found, ${size} in ${linksFile}`);
   } else {
     outDir ??= pageDir(dest, slug, null);
     console.log(`Output:  ${outDir}`);
@@ -173,17 +229,7 @@ async function main() {
   if (!existsSync(linksFile)) throw new Error(`${linksFile} does not exist, run without --skip-collect first`);
   if (!readFileSync(linksFile, 'utf8').trim()) throw new Error('No reels or videos found on this page');
   const code = await downloadAll({ linksFile, outDir, cookieArgs, extraArgs: ytDlpArgs });
-  if (code !== 0) console.log(`Warning: yt-dlp exited with ${code}, some videos may be missing`);
-
-  if (!opts['keep-codec']) {
-    const { converted, failed } = await convertToH264(outDir);
-    if (converted || failed) console.log(`Converted ${converted} videos to H.264${failed ? `, ${failed} failed` : ''}`);
-  }
-
-  cleanUp();
-  const total = readdirSync(outDir).filter(f => f.endsWith('.mp4') && !f.startsWith('.')).length;
-  console.log(`Done: ${total} videos in ${outDir}`);
-  return code === 0 ? 0 : 2;
+  return finish(code, opts['keep-codec']);
 }
 
 main().then(
