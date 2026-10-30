@@ -28,6 +28,8 @@ Options:
   --profile <dir>     Firefox profile directory (default: auto-detect)
   --collect-only      Only write links.txt, do not download
   --skip-collect      Only download the links already in links.txt
+  --quality <q>       hd: Facebook's progressive file, mostly 720p H.264 (default)
+                      full: highest resolution, mostly AV1
   --keep-codec        Do not convert AV1/VP9 files to H.264
   --max-links <n>     Stop collecting after n links (for testing)
   --max-idle <n>      Scroll rounds without new content before giving up (default: 3)
@@ -112,7 +114,7 @@ async function finish(code, keepCodec, onlyId = null) {
   return code === 0 ? 0 : 2;
 }
 
-async function dumpSingle(link, { dest, out, cookieArgs, cacheDir, keepCodec, ytDlpArgs }) {
+async function dumpSingle(link, { dest, out, cookieArgs, cacheDir, quality, keepCodec, ytDlpArgs }) {
   console.log(`Video:   ${link.url}`);
   const { out: meta } = await run(
     'yt-dlp',
@@ -131,7 +133,7 @@ async function dumpSingle(link, { dest, out, cookieArgs, cacheDir, keepCodec, yt
   mkdirSync(cacheDir, { recursive: true });
   const batch = join(cacheDir, 'single.txt');
   writeFileSync(batch, `${link.url}\n`);
-  const code = await downloadAll({ linksFile: batch, outDir, cookieArgs, extraArgs: ytDlpArgs });
+  const code = await downloadAll({ linksFile: batch, outDir, cookieArgs, quality, extraArgs: ytDlpArgs });
   return finish(code, keepCodec, link.id);
 }
 
@@ -146,6 +148,7 @@ async function main() {
       profile: { type: 'string' },
       'collect-only': { type: 'boolean', default: false },
       'skip-collect': { type: 'boolean', default: false },
+      quality: { type: 'string', default: 'hd' },
       'keep-codec': { type: 'boolean', default: false },
       'max-links': { type: 'string' },
       'max-idle': { type: 'string', default: '3' },
@@ -163,6 +166,7 @@ async function main() {
   const tabs = opts.tabs.split(',').map(t => t.trim()).filter(Boolean);
   const badTab = tabs.find(t => !['reels', 'videos'].includes(t));
   if (badTab) throw new Error(`Unknown tab "${badTab}", use reels and/or videos`);
+  if (!['hd', 'full'].includes(opts.quality)) throw new Error(`Unknown quality "${opts.quality}", use hd or full`);
 
   const single = parseVideoLink(pageInput);
   const { slug, tabUrls } = single ? { slug: null, tabUrls: [] } : resolvePage(pageInput, tabs);
@@ -188,6 +192,7 @@ async function main() {
       out: opts.out ? resolve(opts.out) : null,
       cookieArgs,
       cacheDir,
+      quality: opts.quality,
       keepCodec: opts['keep-codec'],
       ytDlpArgs,
     });
@@ -228,7 +233,7 @@ async function main() {
   const linksFile = join(outDir, 'links.txt');
   if (!existsSync(linksFile)) throw new Error(`${linksFile} does not exist, run without --skip-collect first`);
   if (!readFileSync(linksFile, 'utf8').trim()) throw new Error('No reels or videos found on this page');
-  const code = await downloadAll({ linksFile, outDir, cookieArgs, extraArgs: ytDlpArgs });
+  const code = await downloadAll({ linksFile, outDir, cookieArgs, quality: opts.quality, extraArgs: ytDlpArgs });
   return finish(code, opts['keep-codec']);
 }
 

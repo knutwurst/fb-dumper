@@ -13,7 +13,9 @@ async function videoCodec(file) {
 
 export async function convertToH264(outDir, log = console.log) {
   const pending = [];
-  for (const name of readdirSync(outDir).filter(f => f.endsWith('.mp4') && !f.startsWith('.'))) {
+  const videos = readdirSync(outDir).filter(f => f.endsWith('.mp4') && !f.startsWith('.'));
+  log(`Checking ${videos.length} videos for H.264`);
+  for (const name of videos) {
     if ((await videoCodec(join(outDir, name))) !== 'h264') pending.push(name);
   }
 
