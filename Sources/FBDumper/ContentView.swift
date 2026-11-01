@@ -6,17 +6,20 @@ struct ContentView: View {
     @AppStorage("destination") private var destination = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Downloads").path
     @AppStorage("quality") private var quality = Quality.fullH264
+    @AppStorage("withVideos") private var withVideos = true
+    @AppStorage("withPhotos") private var withPhotos = true
     @State private var pageURL = ""
     @State private var showLog = false
 
     private var trimmedURL: String { pageURL.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var canStart: Bool { !trimmedURL.isEmpty && !destination.isEmpty }
+    private var canStart: Bool { !trimmedURL.isEmpty && !destination.isEmpty && (withVideos || withPhotos) }
+    private var tabs: [String] { (withVideos ? ["reels", "videos"] : []) + (withPhotos ? ["photos"] : []) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
                 GridRow {
-                    Text("Seite / Reel").gridColumnAlignment(.trailing)
+                    Text("Seite / Link").gridColumnAlignment(.trailing)
                     TextField("https://www.facebook.com/…", text: $pageURL)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(start)
@@ -29,13 +32,22 @@ struct ContentView: View {
                         Button("Wählen …", action: chooseDestination)
                     }
                 }
+                GridRow {
+                    Text("Inhalt")
+                    HStack(spacing: 20) {
+                        Toggle("Reels & Videos", isOn: $withVideos)
+                        Toggle("Fotos", isOn: $withPhotos)
+                    }
+                    .toggleStyle(.checkbox)
+                }
                 GridRow(alignment: .firstTextBaseline) {
-                    Text("Qualität")
+                    Text("Videoqualität")
                     Picker("Qualität", selection: $quality) {
                         ForEach(Quality.allCases) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.radioGroup)
                     .labelsHidden()
+                    .disabled(!withVideos)
                 }
             }
             .disabled(runner.isRunning)
@@ -72,7 +84,7 @@ struct ContentView: View {
                     if runner.currentFile != nil || runner.fileDetail != nil {
                         HStack(spacing: 6) {
                             if let file = runner.currentFile {
-                                Image(systemName: "film").foregroundStyle(.secondary)
+                                Image(systemName: file.hasSuffix(".mp4") ? "film" : "photo").foregroundStyle(.secondary)
                                 Text(file)
                                     .font(.system(.callout, design: .monospaced))
                                     .lineLimit(1)
@@ -181,7 +193,7 @@ struct ContentView: View {
         guard canStart, !runner.isRunning else { return }
         let path = (destination as NSString).expandingTildeInPath
         destination = path
-        runner.start(pageURL: trimmedURL, destination: path, quality: quality)
+        runner.start(pageURL: trimmedURL, destination: path, quality: quality, tabs: tabs)
     }
 
     private func chooseDestination() {

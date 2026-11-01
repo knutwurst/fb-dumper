@@ -44,7 +44,7 @@ final class DumpRunner: ObservableObject {
             .appendingPathComponent("com.github.knutwurst.fb-dumper")
     }
 
-    func start(pageURL: String, destination: String, quality: Quality) {
+    func start(pageURL: String, destination: String, quality: Quality, tabs: [String]) {
         guard !isRunning else { return }
         guard let cli = Bundle.main.resourceURL?.appendingPathComponent("dumper/src/cli.js"),
               FileManager.default.fileExists(atPath: cli.path) else {
@@ -56,7 +56,8 @@ final class DumpRunner: ObservableObject {
         reset()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["node", cli.path, pageURL, "--dest", destination] + quality.arguments
+        process.arguments = ["node", cli.path, pageURL, "--dest", destination, "--tabs", tabs.joined(separator: ",")]
+            + quality.arguments
 
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (env["PATH"] ?? "/usr/bin:/bin:/usr/sbin:/sbin")
@@ -156,6 +157,8 @@ final class DumpRunner: ObservableObject {
 
     private func videos(_ n: Int) -> String { n == 1 ? "1 Video" : "\(n) Videos" }
 
+    private func photos(_ n: Int) -> String { n == 1 ? "1 Foto" : "\(n) Fotos" }
+
     private func handle(_ line: String) {
         if line.hasPrefix("Output:") {
             let folder = URL(fileURLWithPath: line.dropFirst("Output:".count).trimmingCharacters(in: .whitespaces))
@@ -163,7 +166,7 @@ final class DumpRunner: ObservableObject {
             pageName = folder.lastPathComponent
         } else if line.hasPrefix("→") {
             phase = .collecting
-            status = line.contains("video") ? "Sammle Videos …" : "Sammle Reels …"
+            status = line.contains("photos") ? "Sammle Fotos …" : line.contains("video") ? "Sammle Videos …" : "Sammle Reels …"
             progress = nil
         } else if let m = line.firstMatch(of: /\((\d+) total\)/), let n = Int(m.1) {
             links = n
@@ -208,6 +211,26 @@ final class DumpRunner: ObservableObject {
         } else if let m = line.firstMatch(of: /^\[Merger\] Merging formats into "(.+)"$/) {
             currentFile = displayName(String(m.1))
             fileDetail = "Bild und Ton zusammenfügen"
+        } else if let m = line.firstMatch(of: /^Photos: (\d+) to download, (\d+) already there/),
+                  let n = Int(m.1), let done = Int(m.2) {
+            phase = .downloading
+            skipped += done
+            if n > 0 {
+                status = "Lade \(photos(n)) …"
+                progress = 0
+            }
+            currentFile = nil
+            fileDetail = nil
+        } else if let m = line.firstMatch(of: /^Photo (\d+)\/(\d+): (.+)$/), let i = Double(m.1), let n = Double(m.2) {
+            status = "Lade Foto \(m.1) von \(m.2)"
+            progress = i / n
+            currentFile = String(m.3)
+            fileDetail = nil
+            loaded += 1
+        } else if let m = line.firstMatch(of: /^Photo (\d+)\/(\d+) failed/), let i = Double(m.1), let n = Double(m.2) {
+            status = "Lade Foto \(m.1) von \(m.2)"
+            progress = i / n
+            errors += 1
         } else if line.firstMatch(of: /^Checking \d+ videos for H\.264/) != nil {
             phase = .converting
             status = "Prüfe Videoformate …"
@@ -222,8 +245,9 @@ final class DumpRunner: ObservableObject {
             fileDetail = nil
         } else if let m = line.firstMatch(of: /^Converted (\d+) videos/), let n = Int(m.1) {
             converted = n
-        } else if let m = line.firstMatch(of: /^Done: (\d+) videos/), let n = Int(m.1) {
-            summary = "Fertig: \(videos(n))"
+        } else if let m = line.firstMatch(of: /^Done: (\d+) videos, (\d+) photos/), let v = Int(m.1), let f = Int(m.2) {
+            let parts = (v > 0 || f == 0 ? [videos(v)] : []) + (f > 0 ? [photos(f)] : [])
+            summary = "Fertig: " + parts.joined(separator: " und ")
         } else if line.hasPrefix("Error:") {
             lastError = line.dropFirst("Error:".count).trimmingCharacters(in: .whitespaces)
         }

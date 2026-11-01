@@ -9,25 +9,27 @@ import { loadCookieFile, writeNetscape } from './cookie-file.js';
 import { downloadAll } from './download.js';
 import { findProfileDir, readFacebookCookies } from './firefox.js';
 import { removeMacJunk } from './junk.js';
-import { parseVideoLink, resolvePage } from './page.js';
+import { parsePhotoLink, parseVideoLink, resolvePage } from './page.js';
+import { downloadPhotos, photoOwner } from './photos.js';
 import { killChildren, run } from './proc.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const USAGE = `Usage: fb-dumper <page-url|reel-url> [options]
+const USAGE = `Usage: fb-dumper <page-url|reel-url|photo-url> [options]
 
-Collects every reel/video link of a Facebook page with your Firefox login,
-downloads them all with yt-dlp and converts anything that is not H.264.
-A single reel or video URL is saved into the folder of its page.
+Collects every reel, video and photo of a Facebook page with your Firefox login,
+downloads the videos with yt-dlp, converts anything that is not H.264 and saves
+the photos in full size into a Fotos folder.
+A single reel, video or photo URL is saved into the folder of its page.
 
 Options:
   --dest <dir>        Base directory, each page gets its own folder in it (default: downloads)
   --out <dir>         Exact output directory, overrides --dest
-  --tabs <list>       Tabs to scan, comma separated: reels,videos (default: reels,videos)
+  --tabs <list>       Tabs to scan, comma separated: reels,videos,photos (default: all)
   --cookies <file>    Use a cookie export (cookies.txt or JSON) instead of reading Firefox
   --profile <dir>     Firefox profile directory (default: auto-detect)
-  --collect-only      Only write links.txt, do not download
-  --skip-collect      Only download the links already in links.txt
+  --collect-only      Only write links.txt and photos.txt, do not download
+  --skip-collect      Only download what is already in links.txt and photos.txt
   --quality <q>       hd: Facebook's progressive file, mostly 720p H.264 (default)
                       full: highest resolution, mostly AV1
   --keep-codec        Do not convert AV1/VP9 files to H.264
@@ -82,24 +84,29 @@ function pageDir(dest, slug, title) {
   return join(dest, existing ?? name ?? slug);
 }
 
-function preparePageDir(dir, slug) {
+function preparePageDir(dir, slug, overwrite = true) {
   mkdirSync(dir, { recursive: true });
-  if (slug && readMarker(dir) !== slug) writeFileSync(join(dir, MARKER), `${slug}\n`);
+  const marker = readMarker(dir);
+  if (slug && marker !== slug && (overwrite || marker === null)) writeFileSync(join(dir, MARKER), `${slug}\n`);
 }
 
-function mergeLinks(linksFile, links) {
+function readLines(file) {
+  return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter(Boolean) : [];
+}
+
+function mergeLinks(linksFile, links, parse = parseVideoLink) {
   const merged = new Map();
-  const previous = existsSync(linksFile) ? readFileSync(linksFile, 'utf8').split('\n') : [];
-  for (const url of [...previous, ...links]) {
-    const link = url && parseVideoLink(url);
+  for (const url of [...readLines(linksFile), ...links]) {
+    const link = parse(url);
     if (link && !merged.has(link.id)) merged.set(link.id, link.url);
   }
   writeFileSync(linksFile, [...merged.values()].join('\n') + '\n');
   return merged.size;
 }
 
-async function finish(code, keepCodec, onlyId = null) {
+async function finish(code, keepCodec, { onlyId = null, photosFailed = 0 } = {}) {
   if (code !== 0) console.log(`Warning: yt-dlp exited with ${code}, some videos may be missing`);
+  if (photosFailed) console.log(`Warning: ${photosFailed} photos failed`);
 
   if (!keepCodec) {
     const { converted, failed } = await convertToH264(outDir);
@@ -107,11 +114,12 @@ async function finish(code, keepCodec, onlyId = null) {
   }
 
   cleanUp();
-  const total = readdirSync(outDir).filter(
-    f => f.endsWith('.mp4') && !f.startsWith('.') && (!onlyId || f.includes(`_${onlyId}.`)),
-  ).length;
-  console.log(`Done: ${total} videos in ${outDir}`);
-  return code === 0 ? 0 : 2;
+  const matches = f => !f.startsWith('.') && (!onlyId || f.includes(`_${onlyId}.`));
+  const videos = readdirSync(outDir).filter(f => f.endsWith('.mp4') && matches(f)).length;
+  const photoDir = join(outDir, 'Fotos');
+  const photos = existsSync(photoDir) ? readdirSync(photoDir).filter(matches).length : 0;
+  console.log(`Done: ${videos} videos, ${photos} photos in ${outDir}`);
+  return code === 0 && !photosFailed ? 0 : 2;
 }
 
 async function dumpSingle(link, { dest, out, cookieArgs, cacheDir, quality, keepCodec, ytDlpArgs }) {
@@ -126,7 +134,7 @@ async function dumpSingle(link, { dest, out, cookieArgs, cacheDir, quality, keep
     .map(v => (v && v !== 'NA' ? v : null));
 
   outDir = out ?? (uploaderId ? pageDir(dest, uploaderId, uploader) : join(dest, 'reels'));
-  preparePageDir(outDir, out ? null : uploaderId);
+  preparePageDir(outDir, out ? null : uploaderId, false);
   console.log(`Output:  ${outDir}`);
   mergeLinks(join(outDir, 'links.txt'), [link.url]);
 
@@ -134,7 +142,18 @@ async function dumpSingle(link, { dest, out, cookieArgs, cacheDir, quality, keep
   const batch = join(cacheDir, 'single.txt');
   writeFileSync(batch, `${link.url}\n`);
   const code = await downloadAll({ linksFile: batch, outDir, cookieArgs, quality, extraArgs: ytDlpArgs });
-  return finish(code, keepCodec, link.id);
+  return finish(code, keepCodec, { onlyId: link.id });
+}
+
+async function dumpSinglePhoto(link, { dest, out, cookies }) {
+  console.log(`Photo:   ${link.url}`);
+  const { ownerId, ownerName } = await photoOwner(link, cookies);
+  outDir = out ?? (ownerId ? pageDir(dest, ownerId, ownerName) : join(dest, 'photos'));
+  preparePageDir(outDir, out ? null : ownerId, false);
+  console.log(`Output:  ${outDir}`);
+  mergeLinks(join(outDir, 'photos.txt'), [link.url], parsePhotoLink);
+  const { failed } = await downloadPhotos({ photos: [link.url], outDir, cookies });
+  return finish(0, true, { onlyId: link.id, photosFailed: failed });
 }
 
 async function main() {
@@ -143,7 +162,7 @@ async function main() {
     options: {
       dest: { type: 'string' },
       out: { type: 'string' },
-      tabs: { type: 'string', default: 'reels,videos' },
+      tabs: { type: 'string', default: 'reels,videos,photos' },
       cookies: { type: 'string' },
       profile: { type: 'string' },
       'collect-only': { type: 'boolean', default: false },
@@ -164,12 +183,13 @@ async function main() {
   }
 
   const tabs = opts.tabs.split(',').map(t => t.trim()).filter(Boolean);
-  const badTab = tabs.find(t => !['reels', 'videos'].includes(t));
-  if (badTab) throw new Error(`Unknown tab "${badTab}", use reels and/or videos`);
+  const badTab = tabs.find(t => !['reels', 'videos', 'photos'].includes(t));
+  if (badTab) throw new Error(`Unknown tab "${badTab}", use reels, videos and/or photos`);
   if (!['hd', 'full'].includes(opts.quality)) throw new Error(`Unknown quality "${opts.quality}", use hd or full`);
 
   const single = parseVideoLink(pageInput);
-  const { slug, tabUrls } = single ? { slug: null, tabUrls: [] } : resolvePage(pageInput, tabs);
+  const singlePhoto = !single && parsePhotoLink(pageInput);
+  const { slug, tabs: pageTabs } = single || singlePhoto ? { slug: null, tabs: [] } : resolvePage(pageInput, tabs);
   const dest = resolve(opts.dest ?? join(ROOT, 'downloads'));
   const cacheDir = process.env.FB_DUMPER_CACHE ?? join(ROOT, '.cache');
 
@@ -197,6 +217,7 @@ async function main() {
       ytDlpArgs,
     });
   }
+  if (singlePhoto) return dumpSinglePhoto(singlePhoto, { dest, out: opts.out ? resolve(opts.out) : null, cookies });
   console.log(`Page:    ${slug}`);
 
   outDir = opts.out ? resolve(opts.out) : null;
@@ -205,8 +226,8 @@ async function main() {
       throw new Error('No Facebook login in these cookies (c_user cookie missing)');
     }
 
-    const { links, title } = await collectLinks({
-      tabUrls,
+    const { links, photos, title } = await collectLinks({
+      tabs: pageTabs,
       cookies,
       headful: opts.headful,
       maxIdleRounds: Number(opts['max-idle']),
@@ -217,9 +238,9 @@ async function main() {
     preparePageDir(outDir, slug);
     console.log(`Output:  ${outDir}`);
 
-    const linksFile = join(outDir, 'links.txt');
-    const size = mergeLinks(linksFile, links);
-    console.log(`\n${links.length} links found, ${size} in ${linksFile}`);
+    const size =
+      mergeLinks(join(outDir, 'links.txt'), links) + mergeLinks(join(outDir, 'photos.txt'), photos, parsePhotoLink);
+    console.log(`\n${links.length + photos.length} links found, ${size} in links.txt and photos.txt`);
   } else {
     outDir ??= pageDir(dest, slug, null);
     console.log(`Output:  ${outDir}`);
@@ -231,10 +252,15 @@ async function main() {
   }
 
   const linksFile = join(outDir, 'links.txt');
-  if (!existsSync(linksFile)) throw new Error(`${linksFile} does not exist, run without --skip-collect first`);
-  if (!readFileSync(linksFile, 'utf8').trim()) throw new Error('No reels or videos found on this page');
-  const code = await downloadAll({ linksFile, outDir, cookieArgs, quality: opts.quality, extraArgs: ytDlpArgs });
-  return finish(code, opts['keep-codec']);
+  const videoLinks = tabs.some(t => t !== 'photos') ? readLines(linksFile) : [];
+  const photoLinks = tabs.includes('photos') ? readLines(join(outDir, 'photos.txt')) : [];
+  if (!videoLinks.length && !photoLinks.length) throw new Error('No reels, videos or photos found on this page');
+
+  const code = videoLinks.length
+    ? await downloadAll({ linksFile, outDir, cookieArgs, quality: opts.quality, extraArgs: ytDlpArgs })
+    : 0;
+  const { failed } = photoLinks.length ? await downloadPhotos({ photos: photoLinks, outDir, cookies }) : { failed: 0 };
+  return finish(code, opts['keep-codec'] || !videoLinks.length, { photosFailed: failed });
 }
 
 main().then(

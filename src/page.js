@@ -1,8 +1,10 @@
 const FB = 'https://www.facebook.com';
 
-const RESERVED = new Set(['reel', 'reels', 'watch', 'share', 'groups', 'events', 'marketplace', 'stories', 'photo', 'video']);
+const RESERVED = new Set(['reel', 'reels', 'watch', 'share', 'groups', 'events', 'marketplace', 'stories', 'photo', 'photo.php', 'video']);
 
-const PROFILE_TABS = { reels: 'reels_tab', videos: 'videos' };
+const PROFILE_TABS = { reels: 'reels_tab', videos: 'videos', photos: 'photos' };
+
+const kind = tab => (tab === 'photos' ? 'photos' : 'videos');
 
 export function resolvePage(input, tabs) {
   let url;
@@ -18,7 +20,7 @@ export function resolvePage(input, tabs) {
     if (!id) throw new Error(`profile.php URL without id: ${input}`);
     return {
       slug: id,
-      tabUrls: tabs.map(t => `${FB}/profile.php?id=${id}&sk=${PROFILE_TABS[t]}`),
+      tabs: tabs.map(t => ({ kind: kind(t), url: `${FB}/profile.php?id=${id}&sk=${PROFILE_TABS[t]}` })),
     };
   }
 
@@ -26,7 +28,7 @@ export function resolvePage(input, tabs) {
   if (!name || RESERVED.has(name.toLowerCase())) {
     throw new Error(`Expected a page URL like ${FB}/<page>, got: ${input}`);
   }
-  return { slug: name, tabUrls: tabs.map(t => `${FB}/${name}/${t}`) };
+  return { slug: name, tabs: tabs.map(t => ({ kind: kind(t), url: `${FB}/${name}/${t}` })) };
 }
 
 const VIDEO_LINK = [
@@ -41,4 +43,9 @@ export function parseVideoLink(href) {
     if (m) return { id: m[1], url: build(m[1], m) };
   }
   return null;
+}
+
+export function parsePhotoLink(href) {
+  const m = href.match(/facebook\.com\/photo(?:\.php)?\/?\?(?:[^#]*&)?fbid=(\d+)/);
+  return m ? { id: m[1], url: `${FB}/photo/?fbid=${m[1]}` } : null;
 }
