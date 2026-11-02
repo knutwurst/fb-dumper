@@ -15,9 +15,9 @@ import { killChildren, run } from './proc.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const USAGE = `Usage: fb-dumper <page-url|reel-url|photo-url> [options]
+const USAGE = `Usage: fb-dumper <page-or-profile-url|reel-url|photo-url> [options]
 
-Collects every reel, video and photo of a Facebook page with your Firefox login,
+Collects every reel, video, photo and album of a Facebook page or profile with your Firefox login,
 downloads the videos with yt-dlp, converts anything that is not H.264 and saves
 the photos in full size into a Fotos folder.
 A single reel, video or photo URL is saved into the folder of its page.

@@ -166,7 +166,8 @@ final class DumpRunner: ObservableObject {
             pageName = folder.lastPathComponent
         } else if line.hasPrefix("→") {
             phase = .collecting
-            status = line.contains("photos") ? "Sammle Fotos …" : line.contains("video") ? "Sammle Videos …" : "Sammle Reels …"
+            status = line.contains("photo") || line.contains("/media/") ? "Sammle Fotos …"
+                : line.contains("video") ? "Sammle Videos …" : "Sammle Reels …"
             progress = nil
         } else if let m = line.firstMatch(of: /\((\d+) total\)/), let n = Int(m.1) {
             links = n
