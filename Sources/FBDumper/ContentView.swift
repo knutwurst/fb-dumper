@@ -63,61 +63,58 @@ struct ContentView: View {
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                                 .help(runner.status)
-                            if let page = runner.pageName {
-                                Text(page)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
+                            Text(runner.pageName ?? " ")
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                         }
                         Spacer()
                     }
 
-                    if runner.isRunning {
+                    Group {
                         if let progress = runner.progress {
                             ProgressView(value: progress)
                         } else {
                             ProgressView().progressViewStyle(.linear)
                         }
                     }
+                    .opacity(runner.isRunning ? 1 : 0)
 
-                    if runner.currentFile != nil || runner.fileDetail != nil {
-                        HStack(spacing: 6) {
-                            if let file = runner.currentFile {
-                                Image(systemName: file.hasSuffix(".mp4") ? "film" : "photo").foregroundStyle(.secondary)
-                                Text(file)
-                                    .font(.system(.callout, design: .monospaced))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            Spacer()
-                            if let detail = runner.fileDetail {
-                                Text(detail)
-                                    .font(.callout)
-                                    .monospacedDigit()
-                                    .foregroundStyle(.secondary)
-                            }
+                    HStack(spacing: 6) {
+                        if let file = runner.currentFile {
+                            Image(systemName: file.hasSuffix(".mp4") ? "film" : "photo").foregroundStyle(.secondary)
+                            Text(file)
+                                .font(.system(.callout, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer(minLength: 0)
+                        Text(runner.fileDetail ?? " ")
+                            .font(.callout)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .frame(height: 18)
+
+                    HStack(spacing: 16) {
+                        if runner.links > 0 {
+                            stat("link", "Links", runner.links)
+                        }
+                        stat("arrow.down.circle", "Neu geladen", runner.loaded)
+                        if runner.skipped > 0 {
+                            stat("checkmark.circle", "Schon da", runner.skipped)
+                        }
+                        if runner.converted > 0 {
+                            stat("arrow.triangle.2.circlepath", "Umgewandelt", runner.converted)
+                        }
+                        if runner.errors > 0 {
+                            stat("exclamationmark.triangle", "Fehler", runner.errors).foregroundStyle(.red)
                         }
                     }
-
-                    if runner.hasStats {
-                        HStack(spacing: 16) {
-                            if runner.links > 0 {
-                                stat("link", "Links", runner.links)
-                            }
-                            stat("arrow.down.circle", "Neu geladen", runner.loaded)
-                            if runner.skipped > 0 {
-                                stat("checkmark.circle", "Schon da", runner.skipped)
-                            }
-                            if runner.converted > 0 {
-                                stat("arrow.triangle.2.circlepath", "Umgewandelt", runner.converted)
-                            }
-                            if runner.errors > 0 {
-                                stat("exclamationmark.triangle", "Fehler", runner.errors).foregroundStyle(.red)
-                            }
-                        }
-                        .font(.callout)
-                    }
+                    .font(.callout)
+                    .frame(height: 18)
+                    .opacity(runner.hasStats ? 1 : 0)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(6)
