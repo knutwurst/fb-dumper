@@ -6,8 +6,10 @@ import { parseArgs } from 'node:util';
 import { collectLinks } from './collect.js';
 import { convertToH264 } from './convert.js';
 import { loadCookieFile, writeNetscape } from './cookie-file.js';
-import { downloadAll } from './download.js';
+import { INSTAGRAM_FORMATS, downloadAll } from './download.js';
+import { readChromeCookies } from './chrome.js';
 import { findProfileDir, readFacebookCookies } from './firefox.js';
+import { collectInstagram, downloadFiles, parseInstagram, readAudio, saveFile } from './instagram.js';
 import { removeMacJunk } from './junk.js';
 import { parsePhotoLink, parseVideoLink, resolvePage } from './page.js';
 import { downloadPhotos, photoOwner } from './photos.js';
@@ -15,12 +17,14 @@ import { killChildren, run } from './proc.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-const USAGE = `Usage: fb-dumper <page-or-profile-url|reel-url|photo-url> [options]
+const USAGE = `Usage: fb-dumper <page-or-profile-url|reel-url|photo-url|instagram-url> [options]
 
 Collects every reel, video, photo and album of a Facebook page or profile with your Firefox login,
 downloads the videos with yt-dlp, converts anything that is not H.264 and saves
 the photos in full size into a Fotos folder.
 A single reel, video or photo URL is saved into the folder of its page.
+An Instagram profile URL dumps all posts and reels, an Instagram audio URL saves
+the audio track. Instagram uses the login of Chrome Canary or Chrome.
 
 Options:
   --dest <dir>        Base directory, each page gets its own folder in it (default: downloads)
@@ -156,6 +160,58 @@ async function dumpSinglePhoto(link, { dest, out, cookies }) {
   return finish(0, true, { onlyId: link.id, photosFailed: failed });
 }
 
+async function dumpInstagram(target, { dest, out, cacheDir, tabs, quality, keepCodec, collectOnly, ytDlpArgs }) {
+  const cookies = readChromeCookies('instagram.com', cacheDir);
+  if (!cookies.some(c => c.name === 'sessionid')) throw new Error('No Instagram login found in Chrome');
+  const netscape = join(cacheDir, 'instagram-cookies.txt');
+  writeNetscape(cookies, netscape);
+  const cookieArgs = ['--cookies', netscape];
+  const folder = (username, name) => pageDir(dest, `instagram:${username}`, `${name ?? username} (Instagram)`);
+
+  if (target.type === 'audio') {
+    const audio = await readAudio({ ...target, cookies });
+    outDir = out ?? (audio.username ? folder(audio.username, audio.fullName) : join(dest, 'Instagram Audio'));
+    preparePageDir(outDir, out || !audio.username ? null : `instagram:${audio.username}`, false);
+    console.log(`Output:  ${outDir}`);
+    const dir = join(outDir, 'Audio');
+    mkdirSync(dir, { recursive: true });
+    const name = `${audio.title}${audio.artist ? ` - ${audio.artist}` : ''} [${audio.id}]`.replace(/[/:\\]/g, '-');
+    const file = await saveFile(audio.src, join(dir, name), { audio: true });
+    console.log(`Audio:   ${file}`);
+    cleanUp();
+    console.log(`Done: 0 videos, 0 photos, 1 audio in ${outDir}`);
+    return 0;
+  }
+
+  console.log(`Page:    instagram.com/${target.username}`);
+  const collected = await collectInstagram({ username: target.username, cookies });
+  const { title } = collected;
+  const videos = tabs.some(t => t !== 'photos') ? collected.videos : [];
+  const files = tabs.includes('photos') ? collected.files : [];
+  outDir = out ?? folder(target.username, title);
+  preparePageDir(outDir, out ? null : `instagram:${target.username}`);
+  console.log(`Output:  ${outDir}`);
+  const size = mergeLinks(join(outDir, 'links.txt'), videos, parseInstagramLink);
+  console.log(`\n${videos.length + files.length} links found, ${size + files.length} in links.txt and photos`);
+  if (collectOnly) {
+    cleanUp();
+    return 0;
+  }
+  if (!videos.length && !files.length) throw new Error('No posts or reels found on this profile');
+
+  const linksFile = join(outDir, 'links.txt');
+  const code = videos.length
+    ? await downloadAll({ linksFile, outDir, cookieArgs, quality, formats: INSTAGRAM_FORMATS, extraArgs: ytDlpArgs })
+    : 0;
+  const { failed } = await downloadFiles({ files, outDir });
+  return finish(code, keepCodec, { photosFailed: failed });
+}
+
+const parseInstagramLink = url => {
+  const m = url.match(/instagram\.com\/(?:p|reel)\/([\w-]+)/);
+  return m ? { id: m[1], url: `https://www.instagram.com/p/${m[1]}/` } : null;
+};
+
 async function main() {
   const { values: opts, positionals } = parseArgs({
     allowPositionals: true,
@@ -187,11 +243,26 @@ async function main() {
   if (badTab) throw new Error(`Unknown tab "${badTab}", use reels, videos and/or photos`);
   if (!['hd', 'full'].includes(opts.quality)) throw new Error(`Unknown quality "${opts.quality}", use hd or full`);
 
+  const dest = resolve(opts.dest ?? join(ROOT, 'downloads'));
+  const cacheDir = process.env.FB_DUMPER_CACHE ?? join(ROOT, '.cache');
+
+  const instagram = parseInstagram(pageInput);
+  if (instagram) {
+    return dumpInstagram(instagram, {
+      dest,
+      out: opts.out ? resolve(opts.out) : null,
+      cacheDir,
+      tabs,
+      quality: opts.quality,
+      keepCodec: opts['keep-codec'],
+      collectOnly: opts['collect-only'],
+      ytDlpArgs,
+    });
+  }
+
   const single = parseVideoLink(pageInput);
   const singlePhoto = !single && parsePhotoLink(pageInput);
   const { slug, tabs: pageTabs } = single || singlePhoto ? { slug: null, tabs: [] } : resolvePage(pageInput, tabs);
-  const dest = resolve(opts.dest ?? join(ROOT, 'downloads'));
-  const cacheDir = process.env.FB_DUMPER_CACHE ?? join(ROOT, '.cache');
 
   let cookies, cookieArgs;
   if (opts.cookies) {

@@ -166,7 +166,8 @@ final class DumpRunner: ObservableObject {
             pageName = folder.lastPathComponent
         } else if line.hasPrefix("→") {
             phase = .collecting
-            status = line.contains("photo") || line.contains("/media/") ? "Sammle Fotos …"
+            status = line.contains("instagram.com") && !line.contains("/reels/") ? "Sammle Beiträge …"
+                : line.contains("photo") || line.contains("/media/") ? "Sammle Fotos …"
                 : line.contains("video") ? "Sammle Videos …" : "Sammle Reels …"
             progress = nil
         } else if let m = line.firstMatch(of: /\((\d+) total\)/), let n = Int(m.1) {
@@ -246,8 +247,10 @@ final class DumpRunner: ObservableObject {
             fileDetail = nil
         } else if let m = line.firstMatch(of: /^Converted (\d+) videos/), let n = Int(m.1) {
             converted = n
-        } else if let m = line.firstMatch(of: /^Done: (\d+) videos, (\d+) photos/), let v = Int(m.1), let f = Int(m.2) {
-            let parts = (v > 0 || f == 0 ? [videos(v)] : []) + (f > 0 ? [photos(f)] : [])
+        } else if let m = line.firstMatch(of: /^Done: (\d+) videos, (\d+) photos(?:, (\d+) audio)?/),
+                  let v = Int(m.1), let f = Int(m.2) {
+            let a = m.3.flatMap { Int($0) } ?? 0
+            let parts = (v > 0 || f + a == 0 ? [videos(v)] : []) + (f > 0 ? [photos(f)] : []) + (a > 0 ? ["\(a) Tonspur"] : [])
             summary = "Fertig: " + parts.joined(separator: " und ")
         } else if line.hasPrefix("Error:") {
             lastError = line.dropFirst("Error:".count).trimmingCharacters(in: .whitespaces)

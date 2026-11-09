@@ -20,7 +20,7 @@ struct ContentView: View {
             Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 10) {
                 GridRow {
                     Text("Seite / Link").gridColumnAlignment(.trailing)
-                    TextField("https://www.facebook.com/…", text: $pageURL)
+                    TextField("facebook.com/… oder instagram.com/…", text: $pageURL)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit(start)
                 }

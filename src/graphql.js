@@ -6,7 +6,8 @@ export function watchQuery(page, name) {
     if (found || !req.url().includes('/api/graphql')) return;
     const form = new URLSearchParams(req.postData() ?? '');
     if (name.test(form.get('fb_api_req_friendly_name') ?? '')) {
-      found = { url: req.url(), form, lsd: req.headers()['x-fb-lsd'] ?? form.get('lsd') ?? '' };
+      const headers = Object.fromEntries(Object.entries(req.headers()).filter(([k]) => k.startsWith('x-')));
+      found = { url: req.url(), form, headers };
     }
   };
   page.on('request', onRequest);
@@ -31,7 +32,7 @@ export async function graphql(page, query, variables, { retries = 5, log = conso
   const form = new URLSearchParams(query.form);
   const name = form.get('fb_api_req_friendly_name');
   form.set('variables', JSON.stringify(variables));
-  const headers = { 'content-type': 'application/x-www-form-urlencoded', 'x-fb-friendly-name': name, 'x-fb-lsd': query.lsd };
+  const headers = { ...query.headers, 'content-type': 'application/x-www-form-urlencoded', 'x-fb-friendly-name': name };
   for (let attempt = 0; ; attempt++) {
     const text = await page.evaluate(
       async ([url, body, headers]) => {
@@ -64,11 +65,12 @@ export function find(value, test) {
 
 export async function paginate(page, query, { variables = {}, onPage, done = () => false, log }) {
   const base = { ...JSON.parse(query.form.get('variables')), ...variables };
+  const key = 'cursor' in base ? 'cursor' : 'after';
   const seen = new Set();
   let cursor = null;
   do {
-    const { text, data } = await graphql(page, query, { ...base, cursor }, { log });
-    onPage(text);
+    const { text, data } = await graphql(page, query, { ...base, [key]: cursor }, { log });
+    onPage(text, data);
     const info = find(data, o => o.page_info)?.page_info;
     cursor = info?.has_next_page && !seen.has(info.end_cursor) ? info.end_cursor : null;
     seen.add(cursor);
